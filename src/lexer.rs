@@ -10,8 +10,8 @@ const EOF_ERR_STR: &str = "Already reach EOF!";
 
 pub struct Lexer<R: Read> {
     has_more: bool,
-    token_queue: LinkedList<Box<dyn Token>>,
-    line_number: u32,
+    token_queue: LinkedList<Token>,
+    line_number: usize,
     reader: BufReader<R>,
 }
 
@@ -30,7 +30,7 @@ impl<R: Read> Lexer<R> {
         }
     }
 
-    pub fn read(&mut self) -> Result<Box<dyn Token>, String> {
+    pub fn read(&mut self) -> Result<Token, String> {
         let result = self.fill_queue(0)?;
         return if result {
             self.token_queue.pop_front().ok_or(String::from(""))
@@ -39,7 +39,7 @@ impl<R: Read> Lexer<R> {
         };
     }
 
-    pub fn peek(&mut self, i: usize) -> Result<&Box<dyn Token>, String> {
+    pub fn peek(&mut self, i: usize) -> Result<&Token, String> {
         let result = self.fill_queue(i)?;
         return if result && i < self.token_queue.len() {
             Ok(self.token_queue.iter().nth(i).unwrap())
@@ -67,9 +67,7 @@ impl<R: Read> Lexer<R> {
         match size {
             0 => {
                 self.has_more = false;
-                self.token_queue.push_back(
-                    Box::new(EofToken::new(self.line_number))
-                );
+                self.token_queue.push_back(Token::EOF { token_base: TokenBase { line_number: self.line_number, text: "".to_string() } });
             }
             _ => {
                 self.line_number += 1;
@@ -79,31 +77,19 @@ impl<R: Read> Lexer<R> {
                         break;
                     }
 
-                    let token: Box<dyn Token>;
+                    let token: Token;
 
                     if cap.get(3) != None {
                         let number = (&cap[3]).parse::<i32>().map_err(|err| err.to_string())?;
-                        token = Box::new(NumberToken::new(self.line_number, number));
+                        token = Token::NUMBER { token_base: TokenBase { line_number: self.line_number, text: cap[3].to_string() }, number };
                     } else if cap.get(4) != None {
-                        token = Box::new(
-                            StringToken::new(
-                                self.line_number,
-                                String::from(&cap[4]),
-                            )
-                        );
+                        token = Token::STRING { token_base: TokenBase { line_number: self.line_number, text: cap[4][1..cap[4].len() - 1].to_string() } };
                     } else {
-                        token = Box::new(
-                            IdToken::new(
-                                self.line_number,
-                                String::from(&cap[1]),
-                            )
-                        );
+                        token = Token::IDENTIFIER { token_base: TokenBase { line_number: self.line_number, text: cap[1].to_string() } };
                     }
                     self.token_queue.push_back(token);
                 }
-                self.token_queue.push_back(
-                    Box::new(EolToken::new(self.line_number))
-                );
+                self.token_queue.push_back(Token::EOL { token_base: TokenBase { line_number: self.line_number, text: "".to_string() } });
             }
         }
 
@@ -111,290 +97,122 @@ impl<R: Read> Lexer<R> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Category {
-    IDENTIFIER = 0,
-    NUMBER,
-    STRING,
-    EOL,
-    EOF,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TokenBase {
-    pub category: Category,
-    pub line_number: u32,
+    pub text: String,
+    pub line_number: usize,
 }
 
-pub trait Token {
-    fn get_category(&self) -> Category;
-    fn get_text(&self) -> String;
-    fn get_number(&self) -> Result<i32, String>;
-    fn get_line_number(&self) -> u32;
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    IDENTIFIER { token_base: TokenBase },
+    NUMBER { token_base: TokenBase, number: i32 },
+    STRING { token_base: TokenBase },
+    EOL { token_base: TokenBase },
+    EOF { token_base: TokenBase },
 }
 
-pub struct IdToken {
-    pub token_base: TokenBase,
-    pub id: String,
-}
-
-impl IdToken {
-    pub fn new(line_number: u32, id: String) -> Self {
-        Self {
-            token_base: TokenBase {
-                category: Category::IDENTIFIER,
-                line_number,
-            },
-            id,
+impl Token {
+    pub fn get_text(&self) -> String {
+        match self {
+            Token::IDENTIFIER { token_base, .. }
+            | Token::NUMBER { token_base, .. }
+            | Token::STRING { token_base, .. }
+            | Token::EOL { token_base, .. }
+            | Token::EOF { token_base, .. } => { token_base.text.clone() }
         }
     }
-}
 
-impl Token for IdToken {
-    fn get_category(&self) -> Category {
-        self.token_base.category
-    }
-
-    fn get_text(&self) -> String {
-        self.id.clone()
-    }
-
-    fn get_number(&self) -> Result<i32, String> {
-        Err("It's not a number token!".to_owned())
-    }
-
-    fn get_line_number(&self) -> u32 {
-        self.token_base.line_number
-    }
-}
-
-impl Debug for dyn Token {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "category: {:?}, text: {}, line_number: {}",
-               self.get_category(), self.get_text(), self.get_line_number())
-    }
-}
-
-#[derive(Debug)]
-pub struct NumberToken {
-    pub token_base: TokenBase,
-    pub number: i32,
-}
-
-impl NumberToken {
-    pub fn new(line_number: u32, number: i32) -> Self {
-        Self {
-            token_base: TokenBase {
-                category: Category::NUMBER,
-                line_number,
-            },
-            number,
+    pub fn get_line_number(&self) -> usize {
+        match self {
+            Token::IDENTIFIER { token_base, .. }
+            | Token::NUMBER { token_base, .. }
+            | Token::STRING { token_base, .. }
+            | Token::EOL { token_base, .. }
+            | Token::EOF { token_base, .. } => { token_base.line_number.clone() }
         }
     }
-}
 
-impl Token for NumberToken {
-    fn get_category(&self) -> Category {
-        self.token_base.category
-    }
-
-    fn get_text(&self) -> String {
-        self.number.to_string()
-    }
-
-    fn get_number(&self) -> Result<i32, String> {
-        Ok(self.number)
-    }
-
-    fn get_line_number(&self) -> u32 {
-        self.token_base.line_number
-    }
-}
-
-#[derive(Debug)]
-pub struct StringToken {
-    pub token_base: TokenBase,
-    pub literal: String,
-}
-
-impl StringToken {
-    pub fn new(line_number: u32, text: String) -> Self {
-        // remove "" from the both end
-        Self {
-            token_base: TokenBase {
-                category: Category::STRING,
-                line_number,
-            },
-            literal: String::from(&text[1..text.len() - 1]),
+    pub fn get_number(&self) -> Result<&i32, String> {
+        match self {
+            Token::NUMBER { number, .. } => { Ok(number) }
+            _ => { Err("Unsupported function!".to_string()) }
         }
-    }
-}
-
-impl Token for StringToken {
-    fn get_category(&self) -> Category {
-        self.token_base.category
-    }
-
-    fn get_text(&self) -> String {
-        self.literal.clone()
-    }
-
-    fn get_number(&self) -> Result<i32, String> {
-        Err("It's not a number token!".to_owned())
-    }
-
-    fn get_line_number(&self) -> u32 {
-        self.token_base.line_number
-    }
-}
-
-#[derive(Debug)]
-pub struct EolToken {
-    pub token_base: TokenBase,
-}
-
-impl EolToken {
-    pub fn new(line_number: u32) -> Self {
-        Self {
-            token_base: TokenBase {
-                category: Category::EOL,
-                line_number,
-            },
-        }
-    }
-}
-
-impl Token for EolToken {
-    fn get_category(&self) -> Category {
-        self.token_base.category
-    }
-
-    fn get_text(&self) -> String {
-        String::from("")
-    }
-
-    fn get_number(&self) -> Result<i32, String> {
-        Err("It's not a number token!".to_owned())
-    }
-
-    fn get_line_number(&self) -> u32 {
-        self.token_base.line_number
-    }
-}
-
-#[derive(Debug)]
-pub struct EofToken {
-    pub token_base: TokenBase,
-}
-
-impl EofToken {
-    pub fn new(line_number: u32) -> Self {
-        Self {
-            token_base: TokenBase {
-                category: Category::EOF,
-                line_number,
-            },
-        }
-    }
-}
-
-impl Token for EofToken {
-    fn get_category(&self) -> Category {
-        self.token_base.category
-    }
-
-    fn get_text(&self) -> String {
-        String::from("")
-    }
-
-    fn get_number(&self) -> Result<i32, String> {
-        Err("It's not a number token!".to_owned())
-    }
-
-    fn get_line_number(&self) -> u32 {
-        self.token_base.line_number
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::io::{BufReader, Read};
 
     use stringreader::StringReader;
 
-    use crate::lexer::{Category, EOF_ERR_STR, Lexer, Token};
+    use crate::lexer::{EOF_ERR_STR, Lexer, Token, TokenBase};
 
     fn get_bufreader_from_str(string: &str) -> BufReader<StringReader> {
         let string_reader = StringReader::new(&string);
         BufReader::new(string_reader)
     }
 
-    fn assert_number_token(token: &Box<dyn Token>, line_number: u32, text: &str) {
-        assert_eq!(token.get_line_number(), line_number);
-        assert_eq!(token.get_text(), text);
-        assert_eq!(token.get_category(), Category::NUMBER);
+    pub fn assert_number_token(token: &Token, line_number: usize, text: &str) {
+        assert_eq!(*token, Token::NUMBER {
+            token_base: TokenBase { line_number, text: text.to_string() },
+            number: text.parse().unwrap(),
+        });
     }
 
-    fn assert_string_token(token: &Box<dyn Token>, line_number: u32, text: &str) {
-        assert_eq!(token.get_line_number(), line_number);
-        assert_eq!(token.get_text(), text);
-        assert_eq!(token.get_category(), Category::STRING);
+    pub fn assert_string_token(token: &Token, line_number: usize, text: &str) {
+        assert_eq!(*token, Token::STRING { token_base: TokenBase { line_number, text: text.to_string() } });
     }
 
-    fn assert_id_token(token: &Box<dyn Token>, line_number: u32, text: &str) {
-        assert_eq!(token.get_line_number(), line_number);
-        assert_eq!(token.get_text(), text);
-        assert_eq!(token.get_category(), Category::IDENTIFIER);
+    pub fn assert_id_token(token: &Token, line_number: usize, text: &str) {
+        assert_eq!(*token, Token::IDENTIFIER { token_base: TokenBase { line_number, text: text.to_string() } });
     }
 
-    fn assert_eol_token(token: &Box<dyn Token>, line_number: u32) {
-        assert_eq!(token.get_line_number(), line_number);
-        assert_eq!(token.get_text(), "");
-        assert_eq!(token.get_category(), Category::EOL);
+    fn assert_eol_token(token: &Token, line_number: usize) {
+        assert_eq!(*token, Token::EOL { token_base: TokenBase { line_number, text: "".to_string() } });
     }
 
-    fn assert_eof_token(token: &Box<dyn Token>, line_number: u32) {
-        assert_eq!(token.get_line_number(), line_number);
-        assert_eq!(token.get_text(), "");
-        assert_eq!(token.get_category(), Category::EOF);
+    fn assert_eof_token(token: &Token, line_number: usize) {
+        assert_eq!(*token, Token::EOF { token_base: TokenBase { line_number, text: "".to_string() } });
     }
 
-    fn read_and_assert_number_token<R: Read>(lexer: &mut Lexer<R>, line_number: u32, text: &str) {
+    fn read_and_assert_number_token<R: Read>(lexer: &mut Lexer<R>, line_number: usize, text: &str) {
         let read_result = lexer.read();
         assert!(read_result.is_ok());
         let token = read_result.unwrap();
         assert_number_token(&token, line_number, text);
     }
 
-    fn read_and_assert_id_token<R: Read>(lexer: &mut Lexer<R>, line_number: u32, text: &str) {
+    fn read_and_assert_id_token<R: Read>(lexer: &mut Lexer<R>, line_number: usize, text: &str) {
         let read_result = lexer.read();
         assert!(read_result.is_ok());
         let token = read_result.unwrap();
         assert_id_token(&token, line_number, text);
     }
 
-    fn read_and_assert_string_token<R: Read>(lexer: &mut Lexer<R>, line_number: u32, text: &str) {
+    fn read_and_assert_string_token<R: Read>(lexer: &mut Lexer<R>, line_number: usize, text: &str) {
         let read_result = lexer.read();
         assert!(read_result.is_ok());
         let token = read_result.unwrap();
         assert_string_token(&token, line_number, text);
     }
 
-    fn read_and_assert_eof_token<R: Read>(lexer: &mut Lexer<R>, line_number: u32) {
+    fn read_and_assert_eof_token<R: Read>(lexer: &mut Lexer<R>, line_number: usize) {
         let read_result = lexer.read();
         assert!(read_result.is_ok());
         let token = read_result.unwrap();
         assert_eof_token(&token, line_number);
     }
 
-    fn peek_and_assert_eof_token<R: Read>(lexer: &mut Lexer<R>, i: usize, line_number: u32) {
+    fn peek_and_assert_eof_token<R: Read>(lexer: &mut Lexer<R>, i: usize, line_number: usize) {
         let peek_result = lexer.peek(i);
         assert!(peek_result.is_ok());
         let token_ref = peek_result.unwrap();
         assert_eof_token(token_ref, line_number);
     }
 
-    fn read_and_assert_eol_token<R: Read>(lexer: &mut Lexer<R>, line_number: u32) {
+    fn read_and_assert_eol_token<R: Read>(lexer: &mut Lexer<R>, line_number: usize) {
         let read_result = lexer.read();
         assert!(read_result.is_ok());
         let token = read_result.unwrap();
@@ -432,9 +250,9 @@ mod tests {
 
         peek_and_assert_eof_token(&mut lexer, 0, 0);
 
-        peek_and_assert_error(&mut lexer, 1,EOF_ERR_STR);
+        peek_and_assert_error(&mut lexer, 1, EOF_ERR_STR);
 
-        peek_and_assert_error(&mut lexer, 2,EOF_ERR_STR);
+        peek_and_assert_error(&mut lexer, 2, EOF_ERR_STR);
     }
 
     #[test]
